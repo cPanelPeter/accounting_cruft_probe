@@ -2,7 +2,7 @@
 eval 'if [ -x /usr/local/cpanel/3rdparty/bin/perl ]; then exec /usr/local/cpanel/3rdparty/bin/perl -x -- $0 ${1+"$@"}; else exec /usr/bin/perl -x $0 ${1+"$@"}; fi;'
 if 0;
 
-#!/usr/bin/perl
+#!/usr/local/cpanel/3rdparty/bin/perl
 
 # accounting cruft probe
 
@@ -17,6 +17,9 @@ if 0;
 
 # maintained by: Blaine Motsinger
 # Modified 7/15/2014 - Peter Elsner (added check option even if account is listed as active)
+# Modified 9/03/2014 - Peter Elsner (fixed shebang line in preparation for Perl 5.14.4 (cp11.46)
+# Modified 5/13/2015 - Peter Elsner (added grep for username to catch when a user name was
+#                      changed via Modify An Account in WHM - Thanks to Marco.
 
 
 BEGIN {unshift @INC, '/usr/local/cpanel';}
@@ -24,7 +27,7 @@ BEGIN {unshift @INC, '/usr/local/cpanel';}
 use strict;
 use warnings;
 
-my $version = '2.1.13';
+my $version = '2.1.14';
 
 use File::Find;
 use Cpanel::MysqlUtils;
@@ -37,7 +40,7 @@ GetOptions ("account=s" => \$account,
 
 print_intro() && print_help() && exit_0() unless ($account or $subaddonparked or $manual);
 
-my ($username, $domain, $termination_date, $check_for, @userdata_files, @results);
+my ($username, $domain, $termination_date, $check_for, @userdata_files, @results, $tcDomain, $tcUsername, @USERDOMAINS, $userdomainline, $NOTFOUND);
 my $is_active = 0;
 
 
@@ -122,6 +125,7 @@ sub process_options {
 sub check_account_active {
     my $accounting_log = '/var/cpanel/accounting.log';
     my $is_account;
+    $is_account = 0;
     my @temp;
 
     if (defined $username) {
@@ -157,6 +161,39 @@ sub check_account_active {
             }
         }
     close $fh;
+
+    # If the user name was changed via Modify An Account, then the cruft check would
+    # not find anything because it would look only in /var/log/accounting.log.
+	# which is not updated when a username is changed.  
+    # Thanks to Marco for reporting this.  - PSE
+	open(USERDOMAINS,"/etc/userdomains");
+	@USERDOMAINS=<USERDOMAINS>;
+	close(USERDOMAINS);
+	
+	foreach $userdomainline(@USERDOMAINS) { 
+		chomp($userdomainline);
+		($tcDomain,$tcUsername)=(split(/: /,$userdomainline));
+		if ($tcUsername =~ m/nobody/) { 
+			$NOTFOUND=1;
+			last;
+		}
+		if ($tcUsername eq $username) { 
+			last;
+		}
+	}
+	if ($NOTFOUND) { 
+		$tcDomain = "";
+		$tcUsername = "";
+	}
+
+    if ($tcDomain) { 
+      $domain = $tcDomain;
+	  $is_active = 1;
+    }
+    if ($tcUsername) { 
+      $username = $tcUsername;
+	  $is_active = 1;
+    }
 
     print "according to $accounting_log\n";
     if (defined $username and !defined $domain) {  # the check will gather both of the variables from the accounting.log, if the account has been on the server
